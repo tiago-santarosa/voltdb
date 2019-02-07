@@ -31,6 +31,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.NavigableMap;
 import java.util.Queue;
 import java.util.Set;
 import java.util.TreeMap;
@@ -335,7 +336,19 @@ public class SpScheduler extends Scheduler implements SnapshotCompletionInterest
                         "had no responses.  This should be impossible?");
             }
         }
-        SettableFuture<Boolean> written = writeIv2ViableReplayEntry();
+        long uniqueId = m_uniqueIdGenerator.getLastUniqueId();
+        if (snapshotSaveTxnId != -1) {
+            /*
+             * See if there is a lower uniqueId which is going to be sent by forwardPendingTaskToRejoinNode and use that
+             * as the lastUniqueId so the lastUniqueId on the new replica does not decrease
+             */
+            Map.Entry<DuplicateCounterKey, DuplicateCounter> entry = getPendingTransactionsAfter(snapshotSaveTxnId)
+                    .firstEntry();
+            if (entry != null) {
+                uniqueId = entry.getValue().getOpenMessage().getUniqueId();
+            }
+        }
+        SettableFuture<Boolean> written = writeIv2ViableReplayEntry(uniqueId);
 
         // Get the fault log status here to ensure the leader has written it to disk
         // before initiating transactions again.
@@ -1553,19 +1566,20 @@ public class SpScheduler extends Scheduler implements SnapshotCompletionInterest
      * the replay entry was never followed through due to conditions, it will be null. If the attempt
      * to write the replay entry went through but could not be done internally, the future will be false.
      */
-    SettableFuture<Boolean> writeIv2ViableReplayEntry()
+    private SettableFuture<Boolean> writeIv2ViableReplayEntry()
     {
+        return writeIv2ViableReplayEntry(m_uniqueIdGenerator.getLastUniqueId());
+    }
+
+    private SettableFuture<Boolean> writeIv2ViableReplayEntry(long lastUniqueId) {
         SettableFuture<Boolean> written = null;
-        if (m_replayComplete) {
-            if (m_isLeader) {
-                // write the viable set locally
-                long faultSpHandle = advanceTxnEgo().getTxnId();
-                written = writeIv2ViableReplayEntryInternal(faultSpHandle);
-                // Generate Iv2LogFault message and send it to replicas
-                Iv2LogFaultMessage faultMsg = new Iv2LogFaultMessage(faultSpHandle, m_uniqueIdGenerator.getLastUniqueId());
-                m_mailbox.send(m_sendToHSIds,
-                        faultMsg);
-            }
+        if (m_replayComplete && m_isLeader) {
+            // write the viable set locally
+            long faultSpHandle = advanceTxnEgo().getTxnId();
+            written = writeIv2ViableReplayEntryInternal(faultSpHandle);
+            // Generate Iv2LogFault message and send it to replicas
+            Iv2LogFaultMessage faultMsg = new Iv2LogFaultMessage(faultSpHandle, lastUniqueId);
+            m_mailbox.send(m_sendToHSIds, faultMsg);
         }
         return written;
     }
@@ -1792,33 +1806,29 @@ public class SpScheduler extends Scheduler implements SnapshotCompletionInterest
         if (replicasAdded.length == 0) {
             return;
         }
-        boolean forwarding = false;
-        // HACKY HACKY HACKY, we know at this time there will be only one fragment with this txnId, so it's safe to use
-        // Long.MAX_VALUE to match the duplicate counter key with the given txn id (there is only one!)
-        DuplicateCounterKey snapshotFragment = m_duplicateCounters.floorKey(new DuplicateCounterKey(txnId, Long.MAX_VALUE));
-        assert (snapshotFragment != null);
-        long snapshotSpHandle = snapshotFragment.m_spHandle;
-        for (Map.Entry<DuplicateCounterKey, DuplicateCounter> entry : m_duplicateCounters.entrySet()) {
-            // First find the mp fragment currently running
-            if (!forwarding && entry.getKey().m_spHandle > snapshotSpHandle) {
-                forwarding = true;
+        boolean sentAny = false;
+        for (Map.Entry<DuplicateCounterKey, DuplicateCounter> entry : getPendingTransactionsAfter(txnId).entrySet()) {
+            if (!sentAny) {
+                sentAny = true;
                 if (tmLog.isDebugEnabled()) {
                     tmLog.debug("Start forwarding pending tasks to rejoin node.");
                 }
             }
             // Then forward any message after the MP txn, I expect them are all Iv2InitiateMessages
-            if (forwarding && entry.getKey().m_txnId != snapshotFragment.m_txnId) {
-                if (tmLog.isDebugEnabled()) {
-                    tmLog.debug(entry.getValue().getOpenMessage().getMessageInfo());
-                }
-                m_mailbox.send(replicasAdded, entry.getValue().getOpenMessage());
-            }
-        }
-        if (forwarding) {
             if (tmLog.isDebugEnabled()) {
-                tmLog.debug("Finish forwarding pending tasks to rejoin node.");
+                tmLog.debug(entry.getValue().getOpenMessage().getMessageInfo());
             }
+            m_mailbox.send(replicasAdded, entry.getValue().getOpenMessage());
         }
+        if (sentAny && tmLog.isDebugEnabled()) {
+            tmLog.debug("Finish forwarding pending tasks to rejoin node.");
+        }
+    }
+
+    private NavigableMap<DuplicateCounterKey, DuplicateCounter> getPendingTransactionsAfter(long txnId) {
+        // Use the highest key with txnId to find everything after that point
+        DuplicateCounterKey maxKeyWithTxnId = new DuplicateCounterKey(txnId, Long.MAX_VALUE);
+        return m_duplicateCounters.tailMap(maxKeyWithTxnId, false);
     }
 
     // Since repair log doesn't include any MP RO transaction, MPI needs to clean up
@@ -1854,8 +1864,9 @@ public class SpScheduler extends Scheduler implements SnapshotCompletionInterest
         ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
         ThreadInfo[] threadInfos = threadMXBean.dumpAllThreads(true, true);
         for (ThreadInfo t : threadInfos) {
-            if (t.getThreadName().startsWith("SP") || t.getThreadName().startsWith("MP Site") || t.getThreadName().startsWith("RO MP Site"))
-            threadDumps.append(t);
+            if (t.getThreadName().startsWith("SP") || t.getThreadName().startsWith("MP Site") || t.getThreadName().startsWith("RO MP Site")) {
+                threadDumps.append(t);
+            }
         }
         return threadDumps.toString();
     }
