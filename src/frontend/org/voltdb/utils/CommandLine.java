@@ -100,7 +100,7 @@ public class CommandLine extends VoltDB.Configuration
         cl.m_versionCompatibilityRegexOverrideForTest = m_versionCompatibilityRegexOverrideForTest;
         cl.m_buildStringOverrideForTest = m_buildStringOverrideForTest;
         cl.m_forceVoltdbCreate = m_forceVoltdbCreate;
-        cl.m_userSchema = m_userSchema;
+        cl.m_userSchemas = m_userSchemas;
         cl.m_stagedClassesPath = m_stagedClassesPath;
 
         // second, copy the derived class fields
@@ -740,8 +740,11 @@ public class CommandLine extends VoltDB.Configuration
             cmdline.add("license"); cmdline.add(m_pathToLicense);
         }
 
-        if (m_userSchema != null) {
-            cmdline.add("schema"); cmdline.add(m_userSchema.getAbsolutePath());
+        if (m_userSchemas != null) {
+            for (File userSchema : m_userSchemas) {
+                cmdline.add("schema");
+                cmdline.add(userSchema.getAbsolutePath());
+            }
         }
 
         if (customCmdLn != null && !customCmdLn.trim().isEmpty())
