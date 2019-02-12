@@ -20,8 +20,6 @@ import java.io.FileDescriptor;
 
 import org.voltcore.logging.VoltLogger;
 
-import sun.misc.SharedSecrets;
-
 public class PosixAdvise {
     private static final VoltLogger hostLog = new VoltLogger("HOST");
 
@@ -64,18 +62,20 @@ public class PosixAdvise {
     public static final int SYNC_FILE_RANGE_SYNC =
             SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE | SYNC_FILE_RANGE_WAIT_AFTER;
 
-    public static native long fadvise(long fd, long offset, long size, int advice);
+    public static native long nativeFadvise(FileDescriptor fd, long offset, long size, int advice);
     public static long fadvise(FileDescriptor fd, long offset, long size, int advice) {
         if (advice == POSIX_FADV_DONTNEED && !ENABLE_FADVISE_DONTNEED) return 0;
-        final long filedescriptor = SharedSecrets.getJavaIOFileDescriptorAccess().get(fd);
-        return fadvise(filedescriptor, offset, size, advice);
+        // final long filedescriptor = SharedSecrets.getJavaIOFileDescriptorAccess().get(fd);
+        // System.out.println(filedescriptor);
+        return nativeFadvise(fd, offset, size, advice);
     }
 
 
     public static native long fallocate(long fd, long offset, long size);
     public static long fallocate(FileDescriptor fd, long offset, long size) {
-        final long filedescriptor = SharedSecrets.getJavaIOFileDescriptorAccess().get(fd);
-        return fallocate(filedescriptor, offset, size);
+        // final long filedescriptor = SharedSecrets.getJavaIOFileDescriptorAccess().get(fd);
+        // return fallocate(filedescriptor, offset, size);
+        return 0;
     }
 
     /*
@@ -84,7 +84,8 @@ public class PosixAdvise {
      */
     public static native long sync_file_range(long fd, long offset, long size, int flags);
     public static long sync_file_range(FileDescriptor fd, long offset, long size, int flags) {
-        final long filedescriptor = SharedSecrets.getJavaIOFileDescriptorAccess().get(fd);
-        return sync_file_range(filedescriptor, offset, size, flags);
+        // final long filedescriptor = SharedSecrets.getJavaIOFileDescriptorAccess().get(fd);
+        // return sync_file_range(filedescriptor, offset, size, flags);
+        //return 0;
     }
 }
