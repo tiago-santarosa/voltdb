@@ -525,13 +525,12 @@ public class LocalCluster extends VoltServerConfig {
 
     @Override
     public boolean compile(VoltProjectBuilder builder) {
-        if (!m_compiled) {
-            m_initialCatalog = builder.compile(templateCmdLine.jarFileName(), m_siteCount, m_hostCount, m_kfactor, null, m_clusterId);
-            m_compiled = m_initialCatalog != null;
-            templateCmdLine.pathToDeployment(builder.getPathToDeployment());
-            m_voltdbroot = builder.getPathToVoltRoot().getAbsolutePath();
-        }
-        return m_compiled;
+        return compile(builder, null);
+    }
+
+    public boolean forceCompile(VoltProjectBuilder builder) {
+        m_compiled = false;
+        return compile(builder);
     }
 
     @Override
@@ -1680,7 +1679,7 @@ public class LocalCluster extends VoltServerConfig {
         try {
             resp = adminClient.callProcedure("@PrepareShutdown");
         } catch (ProcCallException e) {
-            throw new IOException(e.getCause());
+            throw new IOException(e);
         }
         if (resp == null) {
             throw new IOException("Failed to prepare for shutdown.");
